@@ -23,3 +23,14 @@ def random_rgb(interval=10):
 
         print(f"New color -> R:{r}, G:{g}, B:{b}")
         time.sleep(interval)
+
+
+def polarity_test():
+    for ca in (False, True):
+        print("Testing COMMON_ANODE =", ca)
+        global COMMON_ANODE
+        COMMON_ANODE = ca
+        set_rgb(255, 0, 0); time.sleep(1)
+        set_rgb(0, 255, 0); time.sleep(1)
+        set_rgb(0, 0, 255); time.sleep(1)
+        set_rgb(0, 0, 0);   time.sleep(0.5)
