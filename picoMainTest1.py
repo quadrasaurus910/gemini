@@ -57,8 +57,8 @@ menu_items = [
 # State variables for menu navigation.
 current_menu_index = 0
 last_y_state = 0
-DEBOUNCE_DELAY = 0.2
-last_menu_change_time = 0
+DEBOUNCE_DELAY_MS = 200 # Time in milliseconds to debounce input.
+last_menu_change_time = time.ticks_ms()
 
 def update_menu_display():
     """
@@ -66,18 +66,15 @@ def update_menu_display():
     """
     lcd.clear()
     
-    # Display the current menu item with a '>' indicator.
+    # Display the menu item above the current selection on the top line.
     lcd.move_to(0, 0)
-    lcd.putstr(f"> {menu_items[current_menu_index]}")
-    
-    # Display the next menu item on the bottom line.
-    # This helps the user see what's coming next.
+    # The modulo operator helps with the wrap-around effect.
+    prev_index = (current_menu_index - 1 + len(menu_items)) % len(menu_items)
+    lcd.putstr(f"  {menu_items[prev_index]}")
+
+    # Display the selected menu item on the bottom line with a '>' indicator.
     lcd.move_to(0, 1)
-    if current_menu_index + 1 < len(menu_items):
-        lcd.putstr(f"  {menu_items[current_menu_index + 1]}")
-    else:
-        # Wrap around to the first item if at the end of the list.
-        lcd.putstr(f"  {menu_items[0]}")
+    lcd.putstr(f"> {menu_items[current_menu_index]}")
 
 def main_loop():
     """
@@ -101,10 +98,10 @@ def main_loop():
             menu_y_state = 1 # Down
         
         # Get the current time for debouncing.
-        current_time = time.monotonic()
+        current_time = time.ticks_ms()
         
         # Check if the state has changed and if enough time has passed since the last change.
-        if menu_y_state != last_y_state and (current_time - last_menu_change_time) > DEBOUNCE_DELAY:
+        if menu_y_state != last_y_state and (current_time - last_menu_change_time) > DEBOUNCE_DELAY_MS:
             if menu_y_state == -1:
                 # Move up in the menu, with wrap-around.
                 current_menu_index = (current_menu_index - 1 + len(menu_items)) % len(menu_items)
