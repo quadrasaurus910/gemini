@@ -11,8 +11,8 @@ from pico_i2c_lcd import I2cLcd
 # --- Hardware Setup (shared across all apps) ---
 
 # For the LCD:
-# Connect the Pico's GP0 (SDA) to the LCD's SDA pin.
-# Connect the Pico's GP1 (SCL) to the LCD's SCL pin.
+# Connect the Pico's GP0 (SDA) to the LCD's SCL pin.
+# Connect the Pico's GP1 (SCL) to the LCD's SDA pin.
 # Connect GND and VCC on the LCD to the Pico's GND and 3.3V pins.
 I2C_SDA_PIN = 0
 I2C_SCL_PIN = 1
