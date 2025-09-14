@@ -48,7 +48,7 @@ def startup_script():
     lcd.clear()
     lcd.putstr("  Pico Project  ")
     lcd.move_to(0, 1)
-    lcd.putstr("    Starting...  ")
+    lcd.putstr("    Starting... ")
     time.sleep(3)
 
 # --- Menu State Management ---
@@ -76,13 +76,13 @@ def update_menu_display():
     # Display the menu item above the current selection on the top line.
     lcd.move_to(0, 0)
     prev_index = (current_menu_index - 1 + len(menu_items)) % len(menu_items)
-    prev_item_text = menu_items[prev_index]
-    lcd.putstr(f"  {prev_item_text.ljust(14)}")
+    prev_item_text = f"  {menu_items[prev_index]}"
+    lcd.putstr(prev_item_text.ljust(NUM_COLS)) # Use ljust for padding.
 
     # Display the selected menu item on the bottom line with a '>' indicator.
     lcd.move_to(0, 1)
-    current_item_text = menu_items[current_menu_index]
-    lcd.putstr(f"> {current_item_text.ljust(14)}")
+    current_item_text = f"> {menu_items[current_menu_index]}"
+    lcd.putstr(current_item_text.ljust(NUM_COLS)) # Use ljust for padding.
 
 def execute_action(menu_item):
     """
