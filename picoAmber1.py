@@ -28,7 +28,6 @@ def set_rgb(r, g, b):
     led_b.duty_u16(int(b / 255 * 65535))
 
 # --- COLOR SPACE CONVERSIONS ---
-# sRGB to XY is necessary for the final validation check.
 def srgb_to_linear(c):
     c_norm = c / 255.0
     if c_norm > 0.04045:
@@ -53,17 +52,22 @@ def rgb_to_xy(r, g, b):
 
 def is_in_amber_zone(r, g, b):
     x, y = rgb_to_xy(r, g, b)
+
+    # --- DEBUGGING LINE ---
+    # This will show you the x, y coordinates for each color being checked.
+    # The output should be around x=0.58, y=0.41 for a true amber.
+    print(f"Checking RGB({r}, {g}, {b}) -> (x={x:.4f}, y={y:.4f})")
+
     is_reddish_enough = y <= 0.390
     is_greenish_enough = y >= x - 0.120
     is_not_too_white = y <= 0.790 - 0.670 * x
-    is_x_in_range = x > 0.5 and x < 0.65 # Simple filter to narrow down the search
+    is_x_in_range = x > 0.5 and x < 0.65
 
     return is_reddish_enough and is_greenish_enough and is_not_too_white and is_x_in_range
 
-# HSV to RGB Conversion
-# This is the key new function for the more efficient loop.
+# --- HSV to RGB Conversion (remains unchanged) ---
 def hsv_to_rgb(h, s, v):
-    if s == 0.0: return v, v, v # Grayscale
+    if s == 0.0: return v, v, v
     
     i = math.floor(h*6.0)
     f = h*6.0 - i
@@ -81,20 +85,26 @@ def hsv_to_rgb(h, s, v):
 
     return int(r*255), int(g*255), int(b*255)
 
-# --- NEW MAIN LOOP ---
+# --- NEW TEST FUNCTION ---
+def test_amber_detection():
+    """
+    Tests if a known amber color is correctly detected by the function.
+    """
+    print("--- Running Amber Detection Test ---")
+    test_color = (255, 191, 0) # A known amber RGB color
+    if is_in_amber_zone(*test_color):
+        print(f"SUCCESS: The known amber color {test_color} was correctly detected as within the zone.")
+    else:
+        print(f"FAILURE: The known amber color {test_color} was NOT detected as within the zone. There may be an issue with the conversion or boundary logic.")
+    print("------------------------------------")
+    utime.sleep(2)
+
+# --- MAIN LOOP ---
 def explore_amber_zone_hsv():
-    """
-    Loops through the amber hue range and displays valid colors.
-    """
     print("Beginning HSV loop through the legal amber zone...")
 
-    # Iterate through a specific hue range for amber (e.g., 40 to 60)
-    # The step size determines the number of colors shown.
     for hue_deg in range(40, 61, 1):
-        # Normalize to a 0.0-1.0 scale for the HSV function
         h = hue_deg / 360.0
-        
-        # Keep saturation and value high for vibrant colors
         s = 1.0
         v = 1.0
         
@@ -102,12 +112,14 @@ def explore_amber_zone_hsv():
         
         if is_in_amber_zone(r, g, b):
             set_rgb(r, g, b)
-            print(f"Valid Amber Color: RGB({r}, {g}, {b})")
+            # --- DEBUGGING LINE ---
+            print(f"VALID AMBER: RGB({r}, {g}, {b}) is within the zone.")
             utime.sleep_ms(50)
             
     print("HSV loop finished.")
-    set_rgb(0, 0, 0) # Turn LED off
+    set_rgb(0, 0, 0)
 
 while True:
+    test_amber_detection()
     explore_amber_zone_hsv()
     utime.sleep(2)
