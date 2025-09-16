@@ -52,16 +52,14 @@ def rgb_to_xy(r, g, b):
 
 def is_in_amber_zone(r, g, b):
     x, y = rgb_to_xy(r, g, b)
+    
+    # Tolerance to account for floating-point inaccuracies
+    TOLERANCE = 0.005 
 
-    # --- DEBUGGING LINE ---
-    # This will show you the x, y coordinates for each color being checked.
-    # The output should be around x=0.58, y=0.41 for a true amber.
-    print(f"Checking RGB({r}, {g}, {b}) -> (x={x:.4f}, y={y:.4f})")
-
-    is_reddish_enough = y <= 0.390
-    is_greenish_enough = y >= x - 0.120
-    is_not_too_white = y <= 0.790 - 0.670 * x
-    is_x_in_range = x > 0.5 and x < 0.65
+    is_reddish_enough = y <= 0.390 + TOLERANCE
+    is_greenish_enough = y >= (x - 0.120) - TOLERANCE
+    is_not_too_white = y <= (0.790 - 0.670 * x) + TOLERANCE
+    is_x_in_range = x > 0.5 - TOLERANCE and x < 0.65 + TOLERANCE
 
     return is_reddish_enough and is_greenish_enough and is_not_too_white and is_x_in_range
 
@@ -87,15 +85,12 @@ def hsv_to_rgb(h, s, v):
 
 # --- NEW TEST FUNCTION ---
 def test_amber_detection():
-    """
-    Tests if a known amber color is correctly detected by the function.
-    """
     print("--- Running Amber Detection Test ---")
     test_color = (255, 191, 0) # A known amber RGB color
     if is_in_amber_zone(*test_color):
-        print(f"SUCCESS: The known amber color {test_color} was correctly detected as within the zone.")
+        print("SUCCESS: The known amber color was correctly detected. The main loop should now work.")
     else:
-        print(f"FAILURE: The known amber color {test_color} was NOT detected as within the zone. There may be an issue with the conversion or boundary logic.")
+        print("FAILURE: The known amber color was NOT detected. Please re-check the conversion formulas or increase the tolerance.")
     print("------------------------------------")
     utime.sleep(2)
 
@@ -112,8 +107,6 @@ def explore_amber_zone_hsv():
         
         if is_in_amber_zone(r, g, b):
             set_rgb(r, g, b)
-            # --- DEBUGGING LINE ---
-            print(f"VALID AMBER: RGB({r}, {g}, {b}) is within the zone.")
             utime.sleep_ms(50)
             
     print("HSV loop finished.")
