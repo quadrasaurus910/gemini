@@ -1,287 +1,278 @@
+# oklab_landscapes4.py
+# --- A dynamic terrain version with decoupled Lightness and Hue. ---
+# This is a complete, self-contained script.
+
 import utime
 import math
 import random
-from machine import Pin, PWM, ADC, I2C # Added I2C
+from machine import Pin, PWM, I2C, ADC
 import gc
 
-# To fix 'I2cLcd' not defined, we need to import it.
-# This assumes pico_i2c_lcd.py is in the same directory or available.
+# It's good practice to handle potential import errors for the LCD
 try:
     from pico_i2c_lcd import I2cLcd 
 except ImportError:
-    # Define a dummy class if not available to prevent crashes
-    class DummyLcd:
+    print("Warning: pico_i2c_lcd library not found. LCD will be disabled.")
+    class I2cLcd: # Dummy class to prevent errors if the library is missing
+        def __init__(self, *args, **kwargs): pass
         def clear(self): pass
         def putstr(self, s): pass
         def move_to(self, col, row): pass
-    I2cLcd = DummyLcd
 
-
-# --- SETUP: RGB LED Pins (Common Anode) ---
-PIN_R = 16
-PIN_G = 17
-PIN_B = 18
-
-# --- JOYSTICK/EXIT Configuration ---
+# --- HARDWARE & CONFIGURATION ---
+PIN_R, PIN_G, PIN_B = 16, 17, 18
 DEBOUNCE_DELAY_MS = 250
-last_exit_time = 0
-current_mode = 0 # 0: Plains, 1: Piedmont, 2: Mountains
-
-led_r = PWM(Pin(PIN_R))
-led_g = PWM(Pin(PIN_G))
-led_b = PWM(Pin(PIN_B))
-
 PWM_FREQ = 1000
-led_r.freq(PWM_FREQ)
-led_g.freq(PWM_FREQ)
-led_b.freq(PWM_FREQ)
 
-# --- LANDSCAPE RANDOMNESS CONFIG ---
-# Random parameters for each run of a mode
-MAX_TRAVERSAL_TIME = 2 * math.pi * 5.0 # Max 't' before mode change
-# A new random value will be chosen from this range when entering a new mode.
-RANDOM_TRAVERSAL_TIME_RANGE = (2 * math.pi * 2.5, 2 * math.pi * 5.5) 
-INITIAL_HUE_OFFSET = 0.0 # Will be a random value between 0 and 2*pi
-L_delta_random_factor = 1.0 # Will be a random value for mountain steepness
-
-# --- HELPER FUNCTION FOR COMMON ANODE LEDS ---
-def set_rgb(r, g, b):
-    """
-    Sets the color of a common anode RGB LED by inverting the values.
-    """
-    r_inverted = 255 - max(0, min(255, int(r)))
-    g_inverted = 255 - max(0, min(255, int(g)))
-    b_inverted = 255 - max(0, min(255, int(b)))
-    
-    led_r.duty_u16(int(r_inverted / 255 * 65535))
-    led_g.duty_u16(int(g_inverted / 255 * 65535))
-    led_b.duty_u16(int(b_inverted / 255 * 65535))
-
-# --- COLOR MODEL CONVERSIONS (From oklab2.py) ---
-# ... (rgb_to_xyz, xyz_to_oklab, oklab_to_xyz, xyz_to_rgb remain the same) ...
-# Note: Functions are kept for completeness, but not reprinted.
-def rgb_to_xyz(r, g, b):
-    r /= 255.0; g /= 255.0; b /= 255.0
-    if r > 0.04045: r = ((r + 0.055) / 1.055) ** 2.4
-    else: r = r / 12.92
-    if g > 0.04045: g = ((g + 0.055) / 1.055) ** 2.4
-    else: g = g / 12.92
-    if b > 0.04045: b = ((b + 0.055) / 1.055) ** 2.4
-    else: b = b / 12.92
-    r *= 100; g *= 100; b *= 100
-    x = r * 0.4124 + g * 0.3576 + b * 0.1805
-    y = r * 0.2126 + g * 0.7152 + b * 0.0722
-    z = r * 0.0193 + g * 0.1192 + b * 0.9505
-    return x, y, z
-
-def xyz_to_oklab(x, y, z):
-    l = 0.4122 * x + 0.5363 * y + 0.0514 * z
-    m = 0.2119 * x + 0.6866 * y + 0.1015 * z
-    s = 0.0883 * x + 0.2880 * y + 0.6237 * z
-    l = l**(1/3); m = m**(1/3); s = s**(1/3)
-    L = 0.2104 * l + 0.7955 * m - 0.0059 * s
-    a = 1.9779 * l - 2.4285 * m + 0.4506 * s
-    b = 0.0328 * l + 0.0763 * m - 0.1091 * s
-    return L, a, b
-
-def oklab_to_xyz(L, a, b):
-    l = L + 0.3963 * a + 0.2158 * b
-    m = L - 0.1055 * a - 0.0639 * b
-    s = L - 0.0264 * a + 0.1239 * b
-    l = l**3; m = m**3; s = s**3
-    x = 1.9015 * l - 1.1974 * m + 0.2969 * s
-    y = 0.9904 * l + 0.0198 * m - 0.0099 * s
-    z = 0.0557 * l - 0.1056 * m + 1.0404 * s
-    return x, y, z
-
+# --- COLOR MODEL CONVERSIONS ---
+# These functions handle the math to convert between RGB and the Oklab color space.
 def xyz_to_rgb(x, y, z):
-    x /= 100.0; y /= 100.0; z /= 100.0
-    r = x * 3.2406 + y * -1.5372 + z * -0.4986
-    g = x * -0.9689 + y * 1.8758 + z * 0.0415
-    b = x * 0.0557 + y * -0.2040 + z * 1.0570
-    if r > 0.0031308: r = 1.055 * (r**(1/2.4)) - 0.055
-    else: r = 12.92 * r
-    if g > 0.0031308: g = 1.055 * (g**(1/2.4)) - 0.055
-    else: g = 12.92 * g
-    if b > 0.0031308: b = 1.055 * (b**(1/2.4)) - 0.055
-    else: b = 12.92 * b
+    r = +3.2406 * x - 1.5372 * y - 0.4986 * z
+    g = -0.9689 * x + 1.8758 * y + 0.0415 * z
+    b = +0.0557 * x - 0.2040 * y + 1.0570 * z
+    r = 1.055 * (r ** (1/2.4)) - 0.055 if r > 0.0031308 else 12.92 * r
+    g = 1.055 * (g ** (1/2.4)) - 0.055 if g > 0.0031308 else 12.92 * g
+    b = 1.055 * (b ** (1/2.4)) - 0.055 if b > 0.0031308 else 12.92 * b
     return int(r * 255), int(g * 255), int(b * 255)
 
-# --- EXIT LOGIC (From oklab2.py) ---
-def check_exit(joy_x_pin):
-    """Checks for a joystick left movement to exit a loop."""
-    global last_exit_time
-    current_time = utime.ticks_ms()
-    x_value = joy_x_pin.read_u16()
-    
-    if x_value < 32768 - 10000:
-        if utime.ticks_diff(current_time, last_exit_time) > DEBOUNCE_DELAY_MS:
-            last_exit_time = current_time
-            return True
-            
-    return False
+def oklab_to_xyz(L, a, b):
+    l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+    m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+    s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    x = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    y = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    z = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    return x / 100, y / 100, z / 100
 
-# ----------------------------------------------------------------------
-# --- LANDSCAPE TRAVERSAL FUNCTIONS (Simulating Partial Derivatives) ---
-# ----------------------------------------------------------------------
+class TerrainObject:
+    """ Represents a single, dynamic elevation feature like a hill or peak. """
+    def __init__(self, base_L, height_range, width_range_ticks):
+        self.base_L = base_L
+        
+        # Randomize the specific properties of this terrain feature
+        self.height = random.uniform(*height_range)
+        self.width_ticks = random.randint(*width_range_ticks)
+        
+        # Internal state
+        self.current_tick = 0
+        self.progress = 0.0 # From 0.0 to 1.0
 
-def traverse_plains(t, L_start, L_delta):
-    """
-    Mode 0: Constant Luminosity (Plains) - Path perpendicular to the L gradient.
-    Hue changes based on t + a random offset. Chroma has a subtle sine wave variation.
-    """
-    global INITIAL_HUE_OFFSET
-    
-    L = L_start # L remains constant
-    # Slowly increase/decrease chroma (R) for a slight saturation change
-    R = 0.10 + 0.05 * math.sin(t / (2 * math.pi * 5))
-    # Hue (angle) cycles through all colors, offset by the random initial hue
-    a = R * math.cos(t + INITIAL_HUE_OFFSET)
-    b = R * math.sin(t + INITIAL_HUE_OFFSET)
-    return L, a, b
+    def update(self):
+        """ Advances the traversal over this terrain object. Returns False when complete. """
+        self.current_tick += 1
+        if self.current_tick >= self.width_ticks:
+            return False # We have finished crossing this terrain
+        
+        self.progress = self.current_tick / self.width_ticks
+        return True # Still traversing
 
-def traverse_piedmont(t, L_start, L_delta):
-    """
-    Mode 1: Gradual Luminosity Change (Piedmont/Rolling Hills) - Small L Delta.
-    L changes slowly and cycles up/down to simulate rolling hills.
-    """
-    global INITIAL_HUE_OFFSET
-    
-    # L changes slowly and cycles up/down. The frequency of the hills changes randomly.
-    hill_freq_factor = 2.0 + 1.0 * math.sin(t / (2 * math.pi * 5)) # Subtle random-like hill frequency
-    L = L_start + 0.10 * math.sin(t / (2 * math.pi * hill_freq_factor))
-    # Keep chroma (R) moderate for a saturated look
-    R = 0.15
-    # Hue changes, offset by the random initial hue
-    a = R * math.cos(t + INITIAL_HUE_OFFSET)
-    b = R * math.sin(t + INITIAL_HUE_OFFSET)
-    return L, a, b
+    def get_elevation(self):
+        """ Calculates the current L value based on progress across the terrain. """
+        # We use a sine half-wave for a smooth hill shape.
+        # This makes it rise from 0 to peak and back to 0 over the duration.
+        elevation_offset = self.height * math.sin(self.progress * math.pi)
+        return self.base_L + elevation_offset
 
-def traverse_mountains(t, L_start, L_delta):
-    """
-    Mode 2: Steep Luminosity Change (Mountains) - Large L Delta.
-    L changes steeply in a linear fashion, with randomized steepness.
-    """
-    global L_delta_random_factor, INITIAL_HUE_OFFSET
-    
-    # L changes steeply, steepness randomized by L_delta_random_factor
-    L = L_start + (L_delta * L_delta_random_factor) * t
-    # Keep a moderate chroma (R)
-    R = 0.15
-    # Hue changes, offset by the random initial hue
-    a = R * math.cos(t + INITIAL_HUE_OFFSET)
-    b = R * math.sin(t + INITIAL_HUE_OFFSET)
-    return L, a, b
+class LandscapeTraversal:
+    """ Manages the state and logic for traversing dynamic Oklab landscapes. """
+    def __init__(self, joy_x_pin, lcd):
+        self.joy_x_pin = joy_x_pin
+        self.lcd = lcd
+        self.last_exit_time = 0
+        
+        # --- LED Setup ---
+        self.led_r = PWM(Pin(PIN_R)); self.led_r.freq(PWM_FREQ)
+        self.led_g = PWM(Pin(PIN_G)); self.led_g.freq(PWM_FREQ)
+        self.led_b = PWM(Pin(PIN_B)); self.led_b.freq(PWM_FREQ)
 
-# ----------------------------------------------------------------------
+        # --- State Management ---
+        self.hue_time = 0.0  # Separate timer for hue/chroma evolution
+        self.current_mode = 0
+        
+        # --- Terrain Management ---
+        self.current_terrain = None # Holds the active TerrainObject, if any
+        self.time_until_next_terrain = 0 # Countdown in ticks
+        
+        # --- MODE CONFIGURATION ---
+        # Defines the rules for generating terrain in each region.
+        self.LANDSCAPE_MODES = [
+            {
+                "name": "PLAINS",
+                "base_L": 0.6,
+                "terrain_height": (0.05, 0.1),  # Small, gentle hills
+                "terrain_width": (150, 400), # Ticks (1.5 to 4 seconds)
+                "wait_time": (300, 800)      # Long waits between hills
+            },
+            {
+                "name": "PIEDMONT",
+                "base_L": 0.4,
+                "terrain_height": (0.15, 0.3), # Medium, rolling hills
+                "terrain_width": (200, 500),
+                "wait_time": (50, 200)       # Shorter waits, more frequent hills
+            },
+            {
+                "name": "MOUNTAINS",
+                "base_L": 0.3, # Valleys are still bright
+                "terrain_height": (0.4, 0.6),  # High peaks
+                "terrain_width": (400, 800), # Wide mountains
+                "wait_time": (0, 50)         # Almost no waiting, continuous peaks
+            },
+        ]
+        self._setup_new_mode()
+
+    def set_rgb(self, r, g, b):
+        """ Sets the color of a common anode RGB LED by inverting values. """
+        duty_r = int((255 - max(0, min(255, int(r)))) / 255 * 65535)
+        duty_g = int((255 - max(0, min(255, int(g)))) / 255 * 65535)
+        duty_b = int((255 - max(0, min(255, int(b)))) / 255 * 65535)
+        self.led_r.duty_u16(duty_r)
+        self.led_g.duty_u16(duty_g)
+        self.led_b.duty_u16(duty_b)
+
+    def check_exit(self):
+        """ Checks for a joystick left movement to exit. """
+        current_time = utime.ticks_ms()
+        if self.joy_x_pin.read_u16() < 32768 - 10000:
+            if utime.ticks_diff(current_time, self.last_exit_time) > DEBOUNCE_DELAY_MS:
+                self.last_exit_time = current_time
+                return True
+        return False
+
+    def _get_random_wait_time(self):
+        """ Gets a random wait time based on the current mode's rules. """
+        wait_range = self.LANDSCAPE_MODES[self.current_mode]["wait_time"]
+        return random.randint(*wait_range)
+
+    def _create_new_terrain(self):
+        """ Creates a new TerrainObject based on the current mode's rules. """
+        mode_rules = self.LANDSCAPE_MODES[self.current_mode]
+        self.current_terrain = TerrainObject(
+            base_L=mode_rules["base_L"],
+            height_range=mode_rules["terrain_height"],
+            width_range_ticks=mode_rules["terrain_width"]
+        )
+        self.update_display() # Update the display to show we've encountered a feature
+
+    def _setup_new_mode(self):
+        """ Resets timers and randomizes parameters for the new mode. """
+        self.hue_time = 0.0
+        self.current_terrain = None
+        self.time_until_next_terrain = self._get_random_wait_time()
+        # Randomize hue parameters separately
+        self.initial_hue_offset = random.uniform(0.0, 2 * math.pi)
+        self.hue_speed = random.uniform(0.8, 1.2)
+        # Total time in a mode before switching
+        self.mode_duration_ticks = random.randint(2000, 3000) # 20-30 seconds
+        self.mode_progress_ticks = 0
+        self.update_display()
+        
+    def update_display(self):
+        """ Updates the LCD with the current mode status. """
+        if not self.lcd: return
+        mode = self.LANDSCAPE_MODES[self.current_mode]
+        self.lcd.clear()
+        
+        status = mode['name']
+        if self.current_terrain:
+            status += ": Peak" # We are on a feature
+        else:
+            status += ": Valley" # We are on flat ground
+        
+        self.lcd.putstr(status)
+        self.lcd.move_to(0, 1)
+        
+        # Show mode progress
+        progress = self.mode_progress_ticks / self.mode_duration_ticks
+        bar_len = int(progress * 16)
+        self.lcd.putstr("[" + "#" * bar_len + "-" * (15 - bar_len) + "]")
+
+    def run(self):
+        """ The main loop for the dynamic landscape traversal. """
+        self.set_rgb(0, 0, 0)
+        utime.sleep(1)
+
+        try:
+            while True:
+                # --- ELEVATION (L) LOGIC ---
+                L = 0.0
+                if self.current_terrain:
+                    L = self.current_terrain.get_elevation()
+                    # Update the terrain and check if it's finished
+                    if not self.current_terrain.update():
+                        self.current_terrain = None
+                        self.time_until_next_terrain = self._get_random_wait_time()
+                        self.update_display()
+                else:
+                    # We are on "flat ground" between features
+                    L = self.LANDSCAPE_MODES[self.current_mode]["base_L"]
+                    self.time_until_next_terrain -= 1
+                    if self.time_until_next_terrain <= 0:
+                        self._create_new_terrain()
+                
+                L = max(0.0, min(1.0, L)) # Clamp L to valid range
+
+                # --- HUE/CHROMA (a, b) LOGIC (Completely Independent) ---
+                R = 0.15 + 0.05 * math.sin(self.hue_time * 0.2) # Slowly evolving chroma
+                effective_hue_time = self.hue_time * self.hue_speed
+                a = R * math.cos(effective_hue_time + self.initial_hue_offset)
+                b = R * math.sin(effective_hue_time + self.initial_hue_offset)
+                self.hue_time += 0.05 # Always advance hue time
+
+                # --- CONVERT AND SET COLOR ---
+                x, y, z = oklab_to_xyz(L, a, b)
+                r, g, b_ = xyz_to_rgb(x * 100, y * 100, z * 100)
+                self.set_rgb(r, g, b_)
+
+                # --- MODE CHANGE LOGIC ---
+                self.mode_progress_ticks += 1
+                if self.mode_progress_ticks >= self.mode_duration_ticks:
+                    self.current_mode = (self.current_mode + 1) % len(self.LANDSCAPE_MODES)
+                    self._setup_new_mode()
+
+                # --- EXIT & SLEEP ---
+                if self.check_exit():
+                    self.set_rgb(0, 0, 0)
+                    return
+                
+                utime.sleep_ms(10)
+                gc.collect()
+
+        finally:
+            self.set_rgb(0, 0, 0) # Ensure LED is off on exit
+
+
 # --- MAIN RUNNER FUNCTION ---
-# ----------------------------------------------------------------------
-
+# This is the function you will call from your `lights_app.py` file.
+# It handles initializing the hardware and starting the main loop.
 def run_landscape_traversal(joy_x_pin):
     """
-    Cycles through three distinct Oklab color landscape traversals.
+    Initializes the necessary hardware and starts the landscape traversal application.
     """
-    global current_mode, MAX_TRAVERSAL_TIME, INITIAL_HUE_OFFSET, L_delta_random_factor
-    
-    LANDSCAPE_MODES = [
-        ("PLAINS: L=CONST", 0.5, 0.0),      # L_start, L_delta (unused)
-        ("PIEDMONT: L=SIN", 0.3, 0.0),      # L_start, L_delta (unused)
-        ("MOUNTAINS: L=STEEP", 0.2, 0.005) # L_start, L_delta (base steepness)
-    ]
-    
-    # Initialize the LCD object here
     lcd = None
     try:
+        # Standard I2C pins for Pico: GP4 (SDA), GP5 (SCL)
         i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400000)
-        # Check if the LCD address (0x27) is present
-        if 0x27 in i2c.scan():
-            lcd = I2cLcd(i2c, 0x27, 2, 16)
+        # Standard address for 1602 LCD shields
+        I2C_ADDR = 0x27 
+        if I2C_ADDR in i2c.scan():
+            lcd = I2cLcd(i2c, I2C_ADDR, 2, 16) # 2 rows, 16 columns
         else:
-            print("LCD not found. Running without LCD.")
+            print(f"LCD not found at address {hex(I2C_ADDR)}.")
     except Exception as e:
-        print(f"LCD Initialization Failed: {e}. Running without LCD.")
+        print(f"LCD Initialization Failed: {e}.")
 
-    set_rgb(0, 0, 0)
-    utime.sleep(1)
+    # Create an instance of the class and run it
+    traversal_app = LandscapeTraversal(joy_x_pin, lcd)
+    traversal_app.run()
 
-    t = 0.0 # Time/angle parameter for traversal
-    
-    # --- Function to setup new mode parameters ---
-    def setup_new_mode(current_mode):
-        global MAX_TRAVERSAL_TIME, INITIAL_HUE_OFFSET, L_delta_random_factor
-        
-        # 1. Randomize the overall traversal time for non-mountain modes
-        MAX_TRAVERSAL_TIME = random.uniform(*RANDOM_TRAVERSAL_TIME_RANGE)
-        
-        # 2. Randomize the initial hue offset (0 to 2*pi)
-        INITIAL_HUE_OFFSET = random.uniform(0.0, 2 * math.pi)
-        
-        # 3. Randomize the steepness for the mountain mode
-        if current_mode == 2:
-            L_delta_random_factor = random.uniform(0.5, 2.0) # 50% to 200% of base steepness
-        else:
-            L_delta_random_factor = 1.0 # Reset for other modes
-            
-    # Initial setup
-    setup_new_mode(current_mode)
-    
-    try:
-        while True:
-            mode_name, L_start, L_delta = LANDSCAPE_MODES[current_mode]
-            
-            # Display current mode on LCD
-            if lcd:
-                lcd.clear()
-                # Use a cleaner display for the mountain steepness
-                display_delta = L_delta * L_delta_random_factor if current_mode == 2 else 0.0
-                lcd.putstr(mode_name)
-                lcd.move_to(0, 1)
-                lcd.putstr("L:{:.3f} dL:{:.4f}".format(L_start, display_delta))
+# --- FOR STANDALONE TESTING ---
+# If you want to run this file by itself for testing, uncomment the following lines.
+# Make sure to define the correct joystick pin.
+# if __name__ == '__main__':
+#     print("Running OKLab Landscape Traversal in standalone mode.")
+#     print("Move joystick left to exit.")
+#     JOY_X_PIN = 26 
+#     joy_x_adc = ADC(Pin(JOY_X_PIN))
+#     run_landscape_traversal(joy_x_adc)
+#     print("Program finished.")
 
-            # Choose the correct traversal function
-            if current_mode == 0:
-                L, a, b = traverse_plains(t, L_start, L_delta)
-            elif current_mode == 1:
-                L, a, b = traverse_piedmont(t, L_start, L_delta)
-            elif current_mode == 2:
-                L, a, b = traverse_mountains(t, L_start, L_delta)
-            
-            # Clamp L value to valid Oklab range [0, 1]
-            L = max(0.0, min(1.0, L))
-
-            # Convert to RGB and set color
-            x, y, z = oklab_to_xyz(L, a, b)
-            r, g, b = xyz_to_rgb(x, y, z)
-            set_rgb(r, g, b)
-            
-            # Advance time/angle
-            t += 0.05
-            
-            # Check for wrap-around and mode change
-            mode_change = False
-            if current_mode == 2 and L >= 1.0:
-                # Mountain mode ends when luminosity hits the top
-                mode_change = True
-            elif current_mode != 2 and t >= MAX_TRAVERSAL_TIME: 
-                # Non-linear modes run for a randomized time
-                mode_change = True
-            
-            if mode_change:
-                t = 0.0
-                current_mode = (current_mode + 1) % len(LANDSCAPE_MODES)
-                setup_new_mode(current_mode) # Setup new random parameters for the next mode
-
-            # Check for exit condition
-            if check_exit(joy_x_pin):
-                set_rgb(0, 0, 0)
-                return
-
-            utime.sleep_ms(10)
-            gc.collect()
-
-    except KeyboardInterrupt:
-        print("Landscape traversal stopped.")
-        pass
-
-    finally:
-        set_rgb(0, 0, 0)
