@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DC Tree Service — Brand Template</title>
+
+  <!-- Bootstrap CSS (CDN) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    /* ---------- Colors & Theme (mobile-first) ---------- */
+    :root{
+      --bg: #f9f7f3;
+      --text: #232323;
+      --accent: #2F5D3D; /* forest green */
+      --muted: #8C6239;  /* earth brown */
+      --card: #ffffff;
+      --logo-fill: #2F5D3D;
+      --shadow: rgba(0,0,0,0.08);
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg: #0f1212;
+        --text: #f2f2f2;
+        --card: #0b0d0d;
+        --accent: #5aa078;
+        --muted: #a77a5e;
+        --logo-fill: #dfeee0;
+        --shadow: rgba(0,0,0,0.45);
+      }
+      .logo-circle { filter: drop-shadow(0 4px 14px rgba(0,0,0,0.6)); }
+    }
+
+    html,body{
+      height:100%;
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    /* ---------- Layout ---------- */
+    .app {
+      display:flex;
+      min-height:100vh;
+      overflow:hidden;
+    }
+
+    /* Sidebar - visible on md+; on smaller screens hidden (use offcanvas) */
+    .sidebar {
+      display:none;
+    }
+    @media(min-width:768px){
+      .sidebar {
+        display:block;
+        width:260px;
+        background:linear-gradient(180deg, rgba(47,93,61,0.06), rgba(140,98,57,0.03));
+        padding:1.25rem;
+        border-right:1px solid rgba(44,44,44,0.05);
+      }
+      .sidebar .brand {
+        margin-bottom:1rem;
+      }
+      .sidebar .nav-link {
+        color:var(--text);
+      }
+    }
+
+    /* Main area contains the horizontal scroll container */
+    .main {
+      flex:1;
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+
+    header.site-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:1rem;
+      padding:0.75rem 1rem;
+      background:transparent;
+      z-index:50;
+    }
+
+    .logo-wrap{
+      display:flex;
+      align-items:center;
+      gap:0.75rem;
+    }
+    .logo-svg{
+      width:56px;
+      height:56px;
+    }
+    .brand-title {
+      font-weight:700;
+      letter-spacing:0.6px;
+    }
+
+    /* Offcanvas customization (tablet: narrower; mobile: full) */
+    .offcanvas-custom .offcanvas-body{
+      padding:1rem;
+    }
+    @media (min-width:576px) and (max-width:991.98px){
+      /* tablet range: width ~35% */
+      .offcanvas-custom.offcanvas-start {
+        width:35% !important;
+        max-width: 420px;
+      }
+    }
+    @media (max-width:575.98px){
+      /* mobile: full overlay */
+      .offcanvas-custom.offcanvas-start {
+        width:100% !important;
+      }
+    }
+
+    /* ---------- Horizontal scroll sections ---------- */
+    .h-scroll {
+      display:flex;
+      align-items:stretch;
+      height: calc(100vh - 64px); /* header height approx */
+      overflow-x:auto;
+      scroll-snap-type:x mandatory;
+      scroll-behavior:smooth;
+      -webkit-overflow-scrolling:touch;
+    }
+    .panel {
+      scroll-snap-align:start;
+      min-width:100%;
+      height:100%;
+      padding:2rem;
+      box-sizing:border-box;
+      overflow:auto;
+      position:relative;
+    }
+
+    /* Panel types */
+    .panel.hero{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:linear-gradient(0deg, rgba(47,93,61,0.12), rgba(47,93,61,0.02));
+    }
+
+    .panel.content{
+      background:linear-gradient(180deg, rgba(0,0,0,0.01), rgba(0,0,0,0.00));
+    }
+
+    /* ---------- Photo mask & overlay styles ---------- */
+    .photo-frame{
+      position:relative;
+      border-radius:10px;
+      overflow:hidden;
+      background:var(--card);
+      box-shadow: 0 4px 18px var(--shadow);
+    }
+    .photo-frame img{
+      display:block;
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      transform-origin:center;
+      transition:transform .6s cubic-bezier(.2,.9,.2,1);
+    }
+    .photo-frame:hover img{ transform:scale(1.03); }
+
+    .photo-mask{
+      position:absolute;
+      inset:0;
+      background: linear-gradient(to bottom right, rgba(0,0,0,0.24), rgba(47,93,61,0.10));
+      mix-blend-mode:multiply;
+      pointer-events:none;
+    }
+
+    .panel .overlay-text{
+      position:absolute;
+      left:2rem;
+      bottom:2rem;
+      z-index:40;
+      color:#fff;
+      text-shadow: 0 6px 20px rgba(0,0,0,0.45);
+      max-width:48%;
+      backdrop-filter: blur(4px) saturate(120%);
+    }
+
+    /* Variation: lighter transparent box for copy area */
+    .glass {
+      background: rgba(255,255,255,0.6);
+      color:var(--text);
+      padding:1rem;
+      border-radius:8px;
+      box-shadow:0 8px 24px rgba(0,0,0,0.06);
+    }
+    @media (prefers-color-scheme: dark){
+      .glass{ background: rgba(0,0,0,0.45); color:var(--text); }
+      .panel .overlay-text{ color: #fff; text-shadow:none; }
+    }
+
+    /* Sections inner grid */
+    .grid-3{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:1rem;
+    }
+    @media(min-width:768px){
+      .grid-3{ grid-template-columns: repeat(3,1fr); }
+    }
+
+    /* Small helpers */
+    .muted { color: #666; }
+    .accent { color:var(--accent); }
+    .cta-btn { background:var(--accent); color:white; border:0; padding:.65rem 1rem; border-radius:8px; }
+    .tag { font-weight:700; color:var(--muted); }
+
+    /* Footer */
+    .site-footer { padding:1rem; text-align:center; font-size:.9rem; color:var(--muted); }
+
+    /* Desktop sidebar nav style (no animation) */
+    .sidebar .nav-link:hover{ background:rgba(47,93,61,0.04); border-radius:6px; }
+
+    /* Responsive tweaks for the horizontal scroll on very wide screens: show panels partial */
+    @media(min-width:1200px){
+      .h-scroll { padding-left:1rem; }
+      .panel { min-width: 100%; max-width: 1000px; margin: 0 1rem; border-radius:12px; background:transparent; }
+      .app-centered { display:flex; justify-content:center; }
+    }
+
+    /* Accessibility focus outlines */
+    a:focus, button:focus, input:focus { outline: 3px solid rgba(47,93,61,0.12); outline-offset:2px; }
+
+  </style>
+</head>
+<body>
+  <div class="app">
+
+    <!-- Sidebar (desktop only) -->
+    <aside class="sidebar d-none d-md-block">
+      <div class="brand">
+        <!-- Inline stand-alone logo (SVG) -->
+        <div style="display:flex;align-items:center;gap:12px;">
+          <svg class="logo-svg logo-circle" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="60" cy="60" r="56" fill="none" stroke="var(--logo-fill)" stroke-width="4"/>
+            <g transform="translate(10,6)">
+              <path d="M50 88 C30 80 20 64 20 48 C20 32 34 24 50 24 C66 24 80 32 80 48 C80 64 70 80 50 88Z" fill="#8C6239"/>
+              <!-- roots -->
+              <path d="M18 64 C30 74 43 76 50 76 C57 76 70 74 82 64" stroke="#8C6239" stroke-width="3" fill="none" stroke-linecap="round"/>
+              <!-- leaves -->
+              <g fill="var(--logo-fill)">
+                <ellipse cx="50" cy="18" rx="6" ry="10"/>
+                <ellipse cx="36" cy="28" rx="6" ry="10" transform="rotate(-18 36 28)"/>
+                <ellipse cx="64" cy="28" rx="6" ry="10" transform="rotate(18 64 28)"/>
+                <ellipse cx="28" cy="40" rx="6" ry="10" transform="rotate(-40 28 40)"/>
+                <ellipse cx="72" cy="40" rx="6" ry="10" transform="rotate(40 72 40)"/>
+                <ellipse cx="50" cy="34" rx="6" ry="10"/>
+              </g>
+            </g>
+          </svg>
+          <div>
+            <div class="brand-title">DC Tree Service</div>
+            <div class="muted" style="font-size:.85rem">Rooted in Service</div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="mt-4">
+        <ul class="nav flex-column">
+          <li class="nav-item"><a class="nav-link" href="#panel-hero">Home</a></li>
+          <li class="nav-item"><a class="nav-link" href="#panel-about">About</a></li>
+          <li class="nav-item"><a class="nav-link" href="#panel-services">Services</a></li>
+          <li class="nav-item"><a class="nav-link" href="#panel-gallery">Gallery</a></li>
+          <li class="nav-item"><a class="nav-link" href="#panel-contact">Contact</a></li>
+        </ul>
+      </nav>
+
+      <div class="mt-4">
+        <div class="glass">
+          <div style="font-weight:700">Dylan Pryor</div>
+          <div style="font-size:.9rem">Certified Arborist</div>
+          <div class="muted" style="font-size:.85rem;margin-top:.5rem">125-458-3850 • info@dctreeservice.com</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+
+      <!-- Header (mobile/tablet uses offcanvas for nav) -->
+      <header class="site-header">
+        <div class="logo-wrap">
+          <!-- small inline logo -->
+          <svg class="logo-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="60" cy="60" r="56" fill="none" stroke="var(--logo-fill)" stroke-width="4"/>
+            <g transform="translate(10,6)">
+              <path d="M50 88 C30 80 20 64 20 48 C20 32 34 24 50 24 C66 24 80 32 80 48 C80 64 70 80 50 88Z" fill="#8C6239"/>
+              <path d="M18 64 C30 74 43 76 50 76 C57 76 70 74 82 64" stroke="#8C6239" stroke-width="3" fill="none" stroke-linecap="round"/>
+              <g fill="var(--logo-fill)">
+                <ellipse cx="50" cy="18" rx="6" ry="10"/>
+                <ellipse cx="36" cy="28" rx="6" ry="10" transform="rotate(-18 36 28)"/>
+                <ellipse cx="64" cy="28" rx="6" ry="10" transform="rotate(18 64 28)"/>
+                <ellipse cx="28" cy="40" rx="6" ry="10" transform="rotate(-40 28 40)"/>
+                <ellipse cx="72" cy="40" rx="6" ry="10" transform="rotate(40 72 40)"/>
+                <ellipse cx="50" cy="34" rx="6" ry="10"/>
+              </g>
+            </g>
+          </svg>
+          <div style="display:inline-block;">
+            <div class="brand-title">DC Tree Service</div>
+            <div class="muted" style="font-size:.8rem">Rooted in Service</div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+          <!-- Offcanvas toggle for small/medium screens -->
+          <button class="btn btn-outline-secondary d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNav" aria-controls="mobileNav">
+            Menu
+          </button>
+          <!-- Desktop visible quick links -->
+          <nav class="d-none d-md-flex gap-2">
+            <a class="btn btn-sm" href="#panel-hero">Home</a>
+            <a class="btn btn-sm" href="#panel-about">About</a>
+            <a class="btn btn-sm" href="#panel-services">Services</a>
+            <a class="btn btn-sm" href="#panel-contact">Contact</a>
+          </nav>
+        </div>
+      </header>
+
+      <!-- Offcanvas (used mobile & tablet) -->
+      <div class="offcanvas offcanvas-start offcanvas-custom" tabindex="-1" id="mobileNav" aria-labelledby="mobileNavLabel">
+        <div class="offcanvas-header">
+          <h5 id="mobileNavLabel">DC Tree Service</h5>
+          <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+          <p class="muted">Rooted in Service. Growing for you.</p>
+          <ul class="nav flex-column">
+            <li class="nav-item"><a class="nav-link" href="#panel-hero" data-bs-dismiss="offcanvas">Home</a></li>
+            <li class="nav-item"><a class="nav-link" href="#panel-about" data-bs-dismiss="offcanvas">About</a></li>
+            <li class="nav-item"><a class="nav-link" href="#panel-services" data-bs-dismiss="offcanvas">Services</a></li>
+            <li class="nav-item"><a class="nav-link" href="#panel-gallery" data-bs-dismiss="offcanvas">Gallery</a></li>
+            <li class="nav-item"><a class="nav-link" href="#panel-contact" data-bs-dismiss="offcanvas">Contact</a></li>
+          </ul>
+
+          <div style="margin-top:1rem;" class="glass">
+            <strong>Dylan Pryor</strong><br>
+            Certified Arborist<br>
+            <small class="muted">125-458-3850 • info@dctreeservice.com</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Horizontal scroll main content -->
+      <div class="h-scroll" id="hScroll">
+
+        <!-- HERO PANEL -->
+        <section class="panel hero" id="panel-hero" aria-label="Home panel">
+          <div style="width:100%;max-width:1200px;margin:0 auto;display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
+            <div style="flex:1;min-width:320px;">
+              <div class="photo-frame" style="height:420px;">
+                <!-- Photo slot: replace src with your chosen hero image -->
+                <img src="/mnt/data/IMG_3442.jpeg" alt="Hero tree/canopy" />
+                <div class="photo-mask"></div>
+              </div>
+            </div>
+
+            <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:1rem;">
+              <div class="glass">
+                <h1 style="margin:0 0 .25rem 0;">Rooted in Service.</h1>
+                <p style="margin:0 .0 0.5rem 0;" class="muted">From humble roots to new heights — reliable, professional tree care for the community.</p>
+                <a class="cta-btn" href="#panel-contact">Request an Estimate</a>
+              </div>
+
+              <div style="display:flex;gap:10px;">
+                <!-- small image tiles -->
+                <div style="flex:1" class="photo-frame" aria-hidden="true"><img src="/mnt/data/att.8-yAUbPG9PmtSLCRwDHw5Zl1wvyUGVMha_-m72m-7do.jpeg" alt="crew at work"></div>
+                <div style="flex:1" class="photo-frame" aria-hidden="true"><img src="/mnt/data/IMG_2333.jpeg" alt="arborist selfie"></div>
+              </div>
+
+              <div class="muted" style="font-size:.9rem">Tip: Replace photos in the hero with high-res action shots. Use the stand-alone SVG logo for crisp printing.</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ABOUT PANEL -->
+        <section class="panel content" id="panel-about" aria-label="About us">
+          <div style="max-width:1100px;margin:0 auto;">
+            <div style="display:flex;gap:1.25rem;flex-wrap:wrap;">
+              <div style="flex:1;min-width:320px;">
+                <h2>About DC Tree Service</h2>
+                <p class="muted">DC Tree Service was built from humble beginnings with a commitment to safety, craftsmanship, and local communities. We provide tree removal, pruning, stump grinding, and land clearing with careful planning and certified staff.</p>
+
+                <div class="mt-3 glass">
+                  <h5 style="margin-bottom:.25rem">Our Promise</h5>
+                  <p style="margin:0" class="muted">Transparent pricing, insured crews, and the responsibility to protect landscapes — from strong roots to new opportunities.</p>
+                </div>
+
+                <div class="mt-3">
+                  <strong class="tag">Service Area</strong>
+                  <p class="muted">Local neighborhoods, municipal contracts, and expanding territories — contact us for commercial requests.</p>
+                </div>
+              </div>
+
+              <div style="flex:1;min-width:300px;">
+                <div class="photo-frame" style="height:360px;">
+                  <img src="/mnt/data/IMG_3442.jpeg" alt="arborist work">
+                  <div class="photo-mask"></div>
+                  <div class="overlay-text">
+                    <div style="font-size:1.25rem;font-weight:700">Safety-driven crews</div>
+                    <div class="muted" style="margin-top:.35rem">Qualified arborists & modern equipment</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SERVICES PANEL -->
+        <section class="panel content" id="panel-services" aria-label="Services">
+          <div style="max-width:1100px;margin:0 auto;">
+            <h2>Services</h2>
+            <div class="grid-3 mt-3">
+              <div class="card p-3">
+                <h5>Tree Removal</h5>
+                <p class="muted">Safe, controlled removal of hazardous or unwanted trees using rigging and proper equipment.</p>
+              </div>
+              <div class="card p-3">
+                <h5>Pruning & Crown Work</h5>
+                <p class="muted">Structural pruning and cosmetic shaping for health and long-term growth.</p>
+              </div>
+              <div class="card p-3">
+                <h5>Stump Grinding</h5>
+                <p class="muted">Efficient stump removal and clean site reclamation.</p>
+              </div>
+            </div>
+
+            <div class="mt-4">
+              <h4>Special Projects</h4>
+              <p class="muted">Land clearing, hazard mitigation, & commercial contracting. We coordinate logistics and permits as needed.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- GALLERY PANEL (horizontal mini-scroll inside) -->
+        <section class="panel content" id="panel-gallery" aria-label="Gallery">
+          <div style="max-width:1200px;margin:0 auto;">
+            <h2>Project Gallery</h2>
+
+            <div style="display:flex;gap:1rem;overflow-x:auto;padding:1rem 0;scroll-snap-type:x mandatory;">
+              <!-- Each tile is a fixed width -->
+              <div style="min-width:320px;scroll-snap-align:center;">
+                <div class="photo-frame" style="height:240px;"><img src="/mnt/data/IMG_3442.jpeg" alt="job photo 1"></div>
+              </div>
+              <div style="min-width:320px;scroll-snap-align:center;">
+                <div class="photo-frame" style="height:240px;"><img src="/mnt/data/att.8-yAUbPG9PmtSLCRwDHw5Zl1wvyUGVMha_-m72m-7do.jpeg" alt="job photo 2"></div>
+              </div>
+              <div style="min-width:320px;scroll-snap-align:center;">
+                <div class="photo-frame" style="height:240px;"><img src="/mnt/data/IMG_2333.jpeg" alt="job photo 3"></div>
+              </div>
+            </div>
+
+            <div class="mt-3 muted">Tip: Replace these images with high-res action shots. Use masks for text overlay and brand consistency.</div>
+          </div>
+        </section>
+
+        <!-- CONTACT PANEL -->
+        <section class="panel content" id="panel-contact" aria-label="Contact">
+          <div style="max-width:900px;margin:0 auto;display:flex;gap:2rem;flex-wrap:wrap;">
+            <div style="flex:1;min-width:300px;">
+              <h2>Contact Us</h2>
+              <p class="muted">Request an estimate, schedule service, or discuss commercial opportunities.</p>
+
+              <form id="contactForm" class="mt-3">
+                <div class="mb-2"><input class="form-control" name="name" placeholder="Your name" required></div>
+                <div class="mb-2"><input class="form-control" name="email" type="email" placeholder="Email" required></div>
+                <div class="mb-2"><textarea class="form-control" name="message" rows="4" placeholder="How can we help?" required></textarea></div>
+                <div><button class="cta-btn" type="submit">Send message</button></div>
+                <div id="formMsg" class="mt-2 muted" style="display:none"></div>
+              </form>
+            </div>
+
+            <div style="flex:1;min-width:260px;">
+              <div class="glass p-3">
+                <strong>Dylan Pryor</strong><br>
+                Certified Arborist<br>
+                <div class="muted" style="margin-top:.5rem">125-458-3850<br>info@dctreeservice.com</div>
+                <div style="margin-top:1rem"><button class="btn btn-outline-secondary">Call Now</button></div>
+              </div>
+
+              <div class="mt-3">
+                <h6>Locations</h6>
+                <p class="muted">Serving the surrounding counties. Insured & certified crews — ask for a service area quote.</p>
+              </div>
+            </div>
+          </div>
+
+          <div style="width:100%;margin-top:2rem;">
+            <div class="site-footer">© <span id="year"></span> DC Tree Service — Rooted in Service. Growing for You.</div>
+          </div>
+        </section>
+
+      </div> <!-- /h-scroll -->
+
+    </main>
+  </div>
+
+  <!-- Bootstrap JS bundle (popper included) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    // Set year in footer
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Smooth navigation: clicking nav links scrolls the horizontal container
+    (function(){
+      const container = document.getElementById('hScroll');
+      // delegate clicks on anchors that link to panels
+      document.querySelectorAll('a[href^="#panel-"]').forEach(a=>{
+        a.addEventListener('click', (e) => {
+          const targetId = a.getAttribute('href').slice(1);
+          const el = document.getElementById(targetId);
+          if(el && container){
+            e.preventDefault();
+            // compute left offset
+            const left = el.offsetLeft - container.offsetLeft;
+            container.scrollTo({ left, behavior: 'smooth' });
+          }
+        });
+      });
+
+      // Allow arrow keys to move between panels
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') {
+          const panels = Array.from(document.querySelectorAll('.panel'));
+          const width = container.clientWidth;
+          // find nearest panel index
+          const index = Math.round(container.scrollLeft / width);
+          let newIndex = index + (ev.key === 'ArrowRight' ? 1 : -1);
+          newIndex = Math.max(0, Math.min(panels.length-1, newIndex));
+          container.scrollTo({ left: newIndex * width, behavior: 'smooth' });
+        }
+      });
+
+      // Optional: "snap" support for wheel tilt: horizontal scroll on vertical wheel when shift held
+      container.addEventListener('wheel', (e) => {
+        if(e.shiftKey){
+          e.preventDefault();
+          container.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+
+    })();
+
+    // Simple contact form demo handler (no backend) — shows a mock success message.
+    (function(){
+      const form = document.getElementById('contactForm');
+      const msg = document.getElementById('formMsg');
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        msg.style.display = 'block';
+        msg.textContent = 'Thanks — message queued (demo). Replace this with your backend endpoint to actually submit.';
+        form.reset();
+      });
+    })();
+
+    // Accessibility: ensure offcanvas uses 30-40% on tablets - handled via CSS above.
+
+    // Note on images:
+    // - Replace the src attributes in <img> tags with your high-res images (local paths or URLs).
+    // - The demo references the images you uploaded at /mnt/data/IMG_3442.jpeg, etc.
+  </script>
+</body>
+</html>
