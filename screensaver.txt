@@ -1,0 +1,52 @@
+sudo apt install grim
+
+fix for screensaver to exit on keystroke or mouse movement
+
+class ScreensaverWindow(Gtk.Window):
+    def __init__(self):
+        # ... (Previous Screenshot code remains here) ...
+        self.take_screenshot() 
+        
+        super().__init__()
+        
+        # ... (Previous setup code) ...
+
+        # 1. ENABLE EVENT LISTENING
+        # We need to tell GTK to listen for mouse movement and clicks
+        self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | 
+                        Gdk.EventMask.BUTTON_PRESS_MASK | 
+                        Gdk.EventMask.KEY_PRESS_MASK)
+
+        self.setup_window()
+
+        # 2. CONNECT SIGNALS TO A QUIT FUNCTION
+        # If the mouse moves, clicks, or a key is pressed -> Run 'self.quit_app'
+        self.connect("draw", self.on_draw)
+        self.connect("destroy", Gtk.main_quit)
+        self.connect("motion-notify-event", self.quit_app)
+        self.connect("button-press-event", self.quit_app)
+        self.connect("key-press-event", self.quit_app)
+
+        GLib.timeout_add(100, self.add_new_box)
+
+    # ... (setup_window, on_draw, add_new_box functions remain the same) ...
+
+    # 3. ADD THE QUIT FUNCTION
+    def quit_app(self, widget, event):
+        Gtk.main_quit()
+
+
+fix for cursor jitter
+
+    import time # Add this at the top of your file
+
+    # Add 'self.start_time = time.time()' inside your __init__ method
+
+    def quit_app(self, widget, event):
+        # Only quit if the screensaver has been running for more than 1 second
+        if time.time() - self.start_time > 1:
+            Gtk.main_quit()
+            return True
+        return False
+
+
