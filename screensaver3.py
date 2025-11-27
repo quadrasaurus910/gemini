@@ -11,12 +11,9 @@ from gi.repository import Gtk, Gdk, GLib
 
 # --- Configuration ---
 SCREENSHOT_PATH = "/tmp/screensaver_bg.png"
-BOXES_PER_CYCLE = 5   # How many boxes to add every 0.1 seconds
-MAX_BOXES = 300       # Restart clearing after this many boxes
-SAFE_DELAY = 1.0      # Seconds to ignore mouse movement at start (prevents instant close)
-
-# Detect if we are on Wayland or X11 to choose the right screenshot tool
-IS_WAYLAND = "WAYLAND_DISPLAY" in os.environ
+BOXES_PER_CYCLE = 5   
+MAX_BOXES = 300       
+SAFE_DELAY = 1.0      
 
 class GradientBox:
     def __init__(self, screen_width, screen_height):
@@ -27,49 +24,48 @@ class GradientBox:
         self.x = random.randint(0, screen_width - self.width)
         self.y = random.randint(0, screen_height - self.height)
         
-        # Random Colors for Gradient (R, G, B)
+        # Random Colors for Gradient
         self.r1, self.g1, self.b1 = (random.random(), random.random(), random.random())
         self.r2, self.g2, self.b2 = (random.random(), random.random(), random.random())
-        self.alpha = 0.8 # Slight transparency
+        self.alpha = 0.8 
 
     def draw(self, cr):
-        # Create Linear Gradient
         gradient = cairo.LinearGradient(self.x, self.y, self.x + self.width, self.y + self.height)
         gradient.add_color_stop_rgba(0.0, self.r1, self.g1, self.b1, self.alpha)
         gradient.add_color_stop_rgba(1.0, self.r2, self.g2, self.b2, self.alpha)
-        
         cr.set_source(gradient)
         cr.rectangle(self.x, self.y, self.width, self.height)
         cr.fill()
 
 class ScreensaverWindow(Gtk.Window):
     def __init__(self):
-        # 1. Take snapshot of current desktop
-        self.take_screenshot()
         self.start_time = time.time()
+        
+        # 1. Take Screenshot
+        self.take_screenshot()
         
         super().__init__()
         
-        self.screen = self.get_screen()
-        self.width = self.screen.get_width()
-        self.height = self.screen.get_height()
-        
-        # Load the screenshot into memory
+        # 2. Get Screen Size 
+        self.calculate_screen_size()
+
+        # Load screenshot
         try:
             self.bg_surface = cairo.ImageSurface.create_from_png(SCREENSHOT_PATH)
         except Exception as e:
-            print(f"Error loading background: {e}")
+            print(f"Background load failed: {e}")
             self.bg_surface = None
 
         self.boxes = []
-
         self.setup_window()
         
-        # 2. Connect Signals (Drawing and Input)
+        # 3. Connect Signals
         self.connect("draw", self.on_draw)
         self.connect("destroy", Gtk.main_quit)
         
-        # Listen for ANY input to quit
+        # CRITICAL FIX: Only hide cursor AFTER window is realized
+        self.connect("realize", self.on_realize)
+        
         self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | 
                         Gdk.EventMask.BUTTON_PRESS_MASK | 
                         Gdk.EventMask.KEY_PRESS_MASK)
@@ -77,64 +73,75 @@ class ScreensaverWindow(Gtk.Window):
         self.connect("button-press-event", self.quit_app)
         self.connect("key-press-event", self.quit_app)
 
-        # 3. Start Animation Loop (100ms)
         GLib.timeout_add(100, self.add_new_box)
 
+    def calculate_screen_size(self):
+        display = Gdk.Display.get_default()
+        monitor = display.get_primary_monitor()
+        if monitor:
+            geometry = monitor.get_geometry()
+            self.width = geometry.width
+            self.height = geometry.height
+        else:
+            # Fallback if monitor detection fails
+            self.width = 1920
+            self.height = 1080
+
     def take_screenshot(self):
-        # Remove old file
         if os.path.exists(SCREENSHOT_PATH):
             os.remove(SCREENSHOT_PATH)
 
+        desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').upper()
+        
         try:
-            if IS_WAYLAND:
-                # Use 'grim' for Wayland (Standard Ubuntu Pi 5)
+            if "GNOME" in desktop or "UBUNTU" in desktop:
+                # GNOME needs the 'gnome-screenshot' package
+                subprocess.run(["gnome-screenshot", "-f", SCREENSHOT_PATH], check=True)
+            elif "WAYLAND_DISPLAY" in os.environ:
                 subprocess.run(["grim", SCREENSHOT_PATH], check=True)
             else:
-                # Use 'scrot' for X11 (Ubuntu on Xorg)
                 subprocess.run(["scrot", "--overwrite", SCREENSHOT_PATH], check=True)
-        except subprocess.CalledProcessError:
-            print("Screenshot tool failed. Background will be black.")
+        except Exception as e:
+            print(f"Screenshot failed: {e}")
 
     def setup_window(self):
         self.fullscreen()
-        self.set_decorated(False) # No title bar
-        self.set_keep_above(True) # Always on top
+        self.set_decorated(False)
+        self.set_keep_above(True)
         self.set_app_paintable(True)
-        
-        # Hide the mouse cursor
+        # REMOVED: Cursor setting here caused the crash
+
+    def on_realize(self, widget):
+        # This runs only when the window is actually created on screen
         cursor = Gdk.Cursor.new_for_display(Gdk.Display.get_default(), Gdk.CursorType.BLANK_CURSOR)
-        self.get_window().set_cursor(cursor)
+        window = self.get_window()
+        if window:
+            window.set_cursor(cursor)
 
     def on_draw(self, widget, cr):
-        # Layer 1: The Desktop Screenshot
         if self.bg_surface:
             cr.set_source_surface(self.bg_surface, 0, 0)
             cr.paint()
         else:
-            cr.set_source_rgb(0, 0, 0) # Black fallback
+            cr.set_source_rgb(0, 0, 0)
             cr.paint()
 
-        # Layer 2: The Gradient Boxes
         for box in self.boxes:
             box.draw(cr)
 
     def add_new_box(self):
-        # Reset if screen is too full
         if len(self.boxes) > MAX_BOXES:
             self.boxes = []
             self.queue_draw()
             return True
             
-        # Add new batch of boxes
         for _ in range(BOXES_PER_CYCLE):
             self.boxes.append(GradientBox(self.width, self.height))
 
         self.queue_draw()
-        return True # Keep timer running
+        return True 
 
     def quit_app(self, widget, event):
-        # IGNORE input for the first few seconds (Safe Start)
-        # This prevents accidental closing due to jitter
         if time.time() - self.start_time > SAFE_DELAY:
             Gtk.main_quit()
             return True
