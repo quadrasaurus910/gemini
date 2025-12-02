@@ -17,14 +17,14 @@ SAFE_DELAY = 1.0
 
 class GradientBox:
     def __init__(self, screen_width, screen_height):
-        # Random Size
-        self.width = random.randint(50, 250)
-        self.height = random.randint(50, 250)
+        # Allow boxes to be slightly larger for better coverage
+        self.width = random.randint(50, 300)
+        self.height = random.randint(50, 300)
         # Random Position
-        self.x = random.randint(0, screen_width - self.width)
-        self.y = random.randint(0, screen_height - self.height)
+        self.x = random.randint(0, screen_width)
+        self.y = random.randint(0, screen_height)
         
-        # Random Colors for Gradient
+        # Random Colors
         self.r1, self.g1, self.b1 = (random.random(), random.random(), random.random())
         self.r2, self.g2, self.b2 = (random.random(), random.random(), random.random())
         self.alpha = 0.8 
@@ -41,12 +41,12 @@ class ScreensaverWindow(Gtk.Window):
     def __init__(self):
         self.start_time = time.time()
         
-        # 1. Take Screenshot
+        # 1. Take Screenshot immediately
         self.take_screenshot()
         
         super().__init__()
         
-        # 2. Get Screen Size 
+        # 2. Get Monitor Size for calculations
         self.calculate_screen_size()
 
         # Load screenshot
@@ -57,15 +57,16 @@ class ScreensaverWindow(Gtk.Window):
             self.bg_surface = None
 
         self.boxes = []
+        
+        # 3. Setup Window
         self.setup_window()
         
-        # 3. Connect Signals
+        # Connect Signals
         self.connect("draw", self.on_draw)
         self.connect("destroy", Gtk.main_quit)
-        
-        # CRITICAL FIX: Only hide cursor AFTER window is realized
         self.connect("realize", self.on_realize)
         
+        # Input listeners
         self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | 
                         Gdk.EventMask.BUTTON_PRESS_MASK | 
                         Gdk.EventMask.KEY_PRESS_MASK)
@@ -83,7 +84,6 @@ class ScreensaverWindow(Gtk.Window):
             self.width = geometry.width
             self.height = geometry.height
         else:
-            # Fallback if monitor detection fails
             self.width = 1920
             self.height = 1080
 
@@ -94,9 +94,10 @@ class ScreensaverWindow(Gtk.Window):
         desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').upper()
         
         try:
+            # We capture standard output to suppress terminal noise
             if "GNOME" in desktop or "UBUNTU" in desktop:
-                # GNOME needs the 'gnome-screenshot' package
-                subprocess.run(["gnome-screenshot", "-f", SCREENSHOT_PATH], check=True)
+                subprocess.run(["gnome-screenshot", "-f", SCREENSHOT_PATH], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             elif "WAYLAND_DISPLAY" in os.environ:
                 subprocess.run(["grim", SCREENSHOT_PATH], check=True)
             else:
@@ -106,26 +107,44 @@ class ScreensaverWindow(Gtk.Window):
 
     def setup_window(self):
         self.fullscreen()
+        # EXPLICITLY RESIZE to ensure it covers the screen
+        self.resize(self.width, self.height)
         self.set_decorated(False)
         self.set_keep_above(True)
         self.set_app_paintable(True)
-        # REMOVED: Cursor setting here caused the crash
 
     def on_realize(self, widget):
-        # This runs only when the window is actually created on screen
         cursor = Gdk.Cursor.new_for_display(Gdk.Display.get_default(), Gdk.CursorType.BLANK_CURSOR)
         window = self.get_window()
         if window:
             window.set_cursor(cursor)
 
     def on_draw(self, widget, cr):
+        # Get the actual size of the window (allocation)
+        alloc = widget.get_allocation()
+        win_w = alloc.width
+        win_h = alloc.height
+
+        # --- DRAW BACKGROUND (SCALED) ---
         if self.bg_surface:
+            # Get image dimensions
+            img_w = self.bg_surface.get_width()
+            img_h = self.bg_surface.get_height()
+            
+            # Calculate scale factor to STRETCH image to window
+            scale_x = win_w / img_w
+            scale_y = win_h / img_h
+            
+            cr.save() # Save current state
+            cr.scale(scale_x, scale_y) # Scale the context
             cr.set_source_surface(self.bg_surface, 0, 0)
             cr.paint()
+            cr.restore() # Restore so boxes aren't distorted
         else:
             cr.set_source_rgb(0, 0, 0)
             cr.paint()
 
+        # --- DRAW BOXES ---
         for box in self.boxes:
             box.draw(cr)
 
