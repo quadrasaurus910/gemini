@@ -13,71 +13,95 @@ from gi.repository import Gtk, Gdk, GLib
 # --- Configuration ---
 SCREENSHOT_PATH = "/tmp/screensaver_bg.png"
 SAFE_DELAY = 1.0
+WIDTH = 3840  # Your TV Width
+HEIGHT = 2160 # Your TV Height
 
-# YOUR TV RESOLUTION
-WIDTH = 3840
-HEIGHT = 2160
-
-# ANIMATION SETTINGS
-MAX_SERIES_ON_SCREEN = 50  # How many "snakes" before we clear
-SPACING = 40               # Distance between blocks in a series
-BLOCK_SIZE_MIN = 30
-BLOCK_SIZE_MAX = 100
+class Block:
+    """Represents a single block's data"""
+    def __init__(self, x, y, size, gray, alpha):
+        self.x = x
+        self.y = y
+        self.size = size
+        self.gray = gray
+        self.alpha = alpha
 
 class BlockSeries:
     """
-    Manages a group of blocks that stagger in a specific direction
+    An independent agent that grows over time.
+    It has its own speed, spacing, and color rules.
     """
     def __init__(self, screen_w, screen_h):
-        # 1. Properties of the SERIES (The Snake)
-        self.num_blocks = random.randint(5, 20) # 5-20 boxes per grouping
+        # --- 1. RANDOM VARIABLES per Series ---
+        self.total_blocks = random.randint(3, 25)
+        self.spacing = random.randint(30, 80)      # Variable Spacing
+        self.size = random.randint(40, 120)
+        self.alpha = random.uniform(0.4, 0.9)      # Variable Transparency
         
-        # Random Start Point
-        self.start_x = random.randint(0, screen_w)
-        self.start_y = random.randint(0, screen_h)
+        # TIMING: How fast does this specific snake grow?
+        # A lower number is faster. Range: 0.05s to 0.4s per block
+        self.spawn_rate = random.uniform(0.05, 0.4) 
+        self.last_spawn_time = 0
         
-        # Random Direction (Vector)
-        # We pick a random angle (0 to 2pi) and convert to x/y
+        # DIRECTION
         angle = random.uniform(0, 2 * math.pi)
-        self.dx = math.cos(angle) * SPACING
-        self.dy = math.sin(angle) * SPACING
+        self.dx = math.cos(angle) * self.spacing
+        self.dy = math.sin(angle) * self.spacing
         
-        # Block Size for this series
-        self.size = random.randint(BLOCK_SIZE_MIN, BLOCK_SIZE_MAX)
+        # START POSITION
+        self.current_x = random.randint(0, screen_w)
+        self.current_y = random.randint(0, screen_h)
         
-        # 2. Color Logic (Grayscale Fade)
-        # Start at a random gray (0.0=black, 1.0=white)
-        self.start_gray = random.random()
-        # Decide if we get lighter or darker
-        if self.start_gray > 0.5:
-            self.gray_step = -0.05 # Get darker
+        # --- 2. COLOR LOGIC ---
+        self.current_gray = random.random() # Start shade (0.0 to 1.0)
+        
+        # Determine step (how much color changes per block)
+        raw_step = random.uniform(0.02, 0.20)
+        
+        # CONSTRAINT: If series is short (< 5), force high contrast
+        if self.total_blocks < 5:
+            raw_step = max(0.15, raw_step)
+
+        # Decide direction of fade (lighten or darken)
+        if self.current_gray > 0.5:
+            self.gray_step = -raw_step 
         else:
-            self.gray_step = 0.05  # Get lighter
+            self.gray_step = raw_step
+
+        # STATE
+        self.blocks = [] # The blocks that actually exist so far
+        self.finished = False
+
+    def update(self):
+        """Called every frame. Decides if it's time to add a new block."""
+        if len(self.blocks) >= self.total_blocks:
+            self.finished = True
+            return
+
+        now = time.time()
+        # Check if enough time has passed based on THIS series' speed
+        if now - self.last_spawn_time > self.spawn_rate:
+            self.add_next_block()
+            self.last_spawn_time = now
+
+    def add_next_block(self):
+        # Clamp gray to valid range
+        render_gray = max(0.0, min(1.0, self.current_gray))
+        
+        # Create block data
+        b = Block(self.current_x, self.current_y, self.size, render_gray, self.alpha)
+        self.blocks.append(b)
+        
+        # Advance math for next time
+        self.current_x += self.dx
+        self.current_y += self.dy
+        self.current_gray += self.gray_step
 
     def draw(self, cr):
-        current_x = self.start_x
-        current_y = self.start_y
-        current_gray = self.start_gray
-
-        for i in range(self.num_blocks):
-            # Clamp gray value between 0 and 1
-            render_gray = max(0.0, min(1.0, current_gray))
-            
-            # Set Color (R, G, B, Alpha)
-            # Alpha varies slightly so they look like glass
-            cr.set_source_rgba(render_gray, render_gray, render_gray, 0.6)
-            
-            # Draw the box
-            cr.rectangle(current_x, current_y, self.size, self.size)
+        # Draw all blocks that exist so far
+        for b in self.blocks:
+            cr.set_source_rgba(b.gray, b.gray, b.gray, b.alpha)
+            cr.rectangle(b.x, b.y, b.size, b.size)
             cr.fill()
-            
-            # --- CALCULATE NEXT ITERATION ---
-            # Move position
-            current_x += self.dx
-            current_y += self.dy
-            
-            # Shift shade
-            current_gray += self.gray_step
 
 class ScreensaverWindow(Gtk.Window):
     def __init__(self):
@@ -85,25 +109,24 @@ class ScreensaverWindow(Gtk.Window):
         self.take_screenshot()
         
         super().__init__()
-        
-        # Use your Hardcoded Dimensions
-        self.width = WIDTH
-        self.height = HEIGHT
+        self.resize(WIDTH, HEIGHT) # Force TV Resolution
 
+        # Load background
         try:
             self.bg_surface = cairo.ImageSurface.create_from_png(SCREENSHOT_PATH)
         except Exception as e:
-            print(f"Background load failed: {e}")
+            print(f"Bg Error: {e}")
             self.bg_surface = None
 
-        self.series_list = [] # List to hold our BlockSeries objects
-
+        self.active_series = [] # List of currently animating series
+        
         self.setup_window()
         
         self.connect("draw", self.on_draw)
         self.connect("destroy", Gtk.main_quit)
         self.connect("realize", self.on_realize)
         
+        # Inputs
         self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | 
                         Gdk.EventMask.BUTTON_PRESS_MASK | 
                         Gdk.EventMask.KEY_PRESS_MASK)
@@ -111,8 +134,8 @@ class ScreensaverWindow(Gtk.Window):
         self.connect("button-press-event", self.quit_app)
         self.connect("key-press-event", self.quit_app)
 
-        # Timer: Add a new series every 200ms
-        GLib.timeout_add(200, self.update_animation)
+        # ANIMATION LOOP: Runs 30 times per second (33ms)
+        GLib.timeout_add(33, self.game_loop)
 
     def take_screenshot(self):
         if os.path.exists(SCREENSHOT_PATH):
@@ -131,98 +154,56 @@ class ScreensaverWindow(Gtk.Window):
 
     def setup_window(self):
         self.fullscreen()
-        self.resize(self.width, self.height)
         self.set_decorated(False)
         self.set_keep_above(True)
         self.set_app_paintable(True)
 
     def on_realize(self, widget):
         cursor = Gdk.Cursor.new_for_display(Gdk.Display.get_default(), Gdk.CursorType.BLANK_CURSOR)
-        window = self.get_window()
-        if window:
-            window.set_cursor(cursor)
+        if self.get_window():
+            self.get_window().set_cursor(cursor)
 
     def on_draw(self, widget, cr):
-        # 1. DRAW BACKGROUND (If first frame, or if we want to redraw it fully)
-        # Optimization: We usually don't need to redraw the FULL background every frame
-        # if we aren't clearing the screen, but Cairo might require it depending on the compositor.
-        # Let's draw the background once, then stack boxes.
-        
-        if not self.series_list:
-             # If list is empty (start or reset), draw full clean background
-            if self.bg_surface:
-                # Scale logic for 4k TV
-                img_w = self.bg_surface.get_width()
-                img_h = self.bg_surface.get_height()
-                scale_x = self.width / img_w
-                scale_y = self.height / img_h
-                
-                cr.save()
-                cr.scale(scale_x, scale_y)
-                cr.set_source_surface(self.bg_surface, 0, 0)
-                cr.paint()
-                cr.restore()
-            else:
-                cr.set_source_rgb(0, 0, 0)
-                cr.paint()
+        # 1. ALWAYS DRAW BACKGROUND FIRST (Fixes Black Screen)
+        if self.bg_surface:
+            img_w = self.bg_surface.get_width()
+            img_h = self.bg_surface.get_height()
+            scale_x = WIDTH / img_w
+            scale_y = HEIGHT / img_h
+            
+            cr.save()
+            cr.scale(scale_x, scale_y)
+            cr.set_source_surface(self.bg_surface, 0, 0)
+            cr.paint()
+            cr.restore()
+        else:
+            cr.set_source_rgb(0, 0, 0)
+            cr.paint()
 
-        # 2. DRAW THE SERIES
-        for series in self.series_list:
+        # 2. Draw all active series on top
+        for series in self.active_series:
             series.draw(cr)
 
-        # 3. THE "REALITY REFRESH" EFFECT
-        # Randomly draw a clean chunk of the background ON TOP of the blocks
-        # This makes it look like the blocks are weaving in and out of the desktop
-        if self.bg_surface and len(self.series_list) > 0:
-            self.draw_reality_patch(cr)
-
-    def draw_reality_patch(self, cr):
-        # Pick a random spot
-        patch_w = random.randint(100, 400)
-        patch_h = random.randint(100, 400)
-        patch_x = random.randint(0, self.width - patch_w)
-        patch_y = random.randint(0, self.height - patch_h)
-
-        # To grab the correct part of the source image, we need to map 
-        # the screen coordinates back to image coordinates
-        img_w = self.bg_surface.get_width()
-        img_h = self.bg_surface.get_height()
-        scale_x = self.width / img_w
-        scale_y = self.height / img_h
-
-        # Save context
-        cr.save()
+    def game_loop(self):
+        """The heart of the animation"""
         
-        # Define the rectangular area we want to "refresh"
-        cr.rectangle(patch_x, patch_y, patch_w, patch_h)
-        cr.clip() # Tell Cairo: "Only draw inside this rectangle"
+        # A. Randomly add a new series (1 in 10 chance per frame)
+        if len(self.active_series) < 15 and random.random() < 0.1:
+            self.active_series.append(BlockSeries(WIDTH, HEIGHT))
 
-        # Draw the background again
-        cr.scale(scale_x, scale_y)
-        cr.set_source_surface(self.bg_surface, 0, 0)
-        cr.paint()
-        
-        # Restore (remove clip)
-        cr.restore()
-        
-        # Optional: Draw a thin border around the patch to make it look "glitchy"
-        cr.set_source_rgba(1, 1, 1, 0.3)
-        cr.set_line_width(1)
-        cr.rectangle(patch_x, patch_y, patch_w, patch_h)
-        cr.stroke()
+        # B. Update existing series
+        for series in self.active_series:
+            series.update()
 
-    def update_animation(self):
-        # Reset if too many series
-        if len(self.series_list) > MAX_SERIES_ON_SCREEN:
-            self.series_list = []
-            self.queue_draw() # This triggers a full background clear in on_draw
-            return True
+        # C. Remove old/finished series
+        # We keep them for a bit after they finish, or remove them immediately?
+        # Let's remove them if they are 'finished' and have been sitting for 2 seconds
+        # For now, let's just keep growing the list until a clear limits
+        if len(self.active_series) > 20:
+            # Remove the oldest one to keep memory clean
+            self.active_series.pop(0)
 
-        # Create a new series object
-        new_series = BlockSeries(self.width, self.height)
-        self.series_list.append(new_series)
-        
-        # Trigger a redraw
+        # D. Trigger a Redraw
         self.queue_draw()
         return True
 
