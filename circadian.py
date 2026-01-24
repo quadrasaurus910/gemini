@@ -1,51 +1,68 @@
-# circadian.py
-# Syncs RGB lighting with local sunrise/sunset times.
-# Uses 3 distinct color palettes that stretch/compress based on day length.
+# circadian_v2.py
+# Uses "Rubber Band" time to map a 24-step color chart to variable day lengths.
+# Features dedicated high-res Sunrise/Sunset sequences.
 
 import network
 import urequests
 import ujson
 import utime
-import machine
-from machine import Pin, PWM, ADC
+import math
+from machine import Pin, PWM
 
 # --- User Configuration ---
-# Fallback Fixed Times (in case WiFi fails)
-FALLBACK_SUNRISE = 7  # 7:00 AM
-FALLBACK_SUNSET = 19  # 7:00 PM
-# Joystick Configuration
-JOY_EXIT_THRESHOLD = 20000 
-JOY_X_PIN = 26
+# Your default "Ideal" times (used if WiFi fails)
+FALLBACK_SUNRISE = 6.0
+FALLBACK_SUNSET = 18.0
+TWILIGHT_DURATION = 0.75  # 45 minutes of dedicated sunrise/sunset transition
 
-# --- Color Palettes ---
-# Format: (R, G, B) tuples
-# The code will interpolate between these points evenly within their time block.
-
-# 1. Night (Midnight -> Astronomical Dawn)
-# Deep blues, purples, essentially "moonlight"
-COLORS_NIGHT = [
-    (5, 0, 15),     # Deepest Midnight
-    (10, 5, 30),    # Starlight
-    (20, 0, 40),    # Deep Violet
-    (5, 0, 15),     # Return to dark
+# --- The 24-Hour Master Palette (The "Ideal" Day) ---
+# Index 0 = Midnight, Index 12 = High Noon.
+# Adjusted for more saturation during day, better brightness at night.
+HOURLY_COLORS = [
+    (5, 0, 20),      # 00:00 Midnight (Deep Blue/Purple)
+    (5, 0, 25),      # 01:00
+    (8, 0, 30),      # 02:00
+    (10, 0, 40),     # 03:00
+    (15, 5, 60),     # 04:00 (Faint pre-dawn)
+    (30, 10, 80),    # 05:00 (Blue hour)
+    (255, 100, 50),  # 06:00 (Sunrise Placeholder - Overridden by Sequence)
+    (255, 160, 80),  # 07:00 (Morning Gold)
+    (255, 200, 100), # 08:00
+    (200, 220, 255), # 09:00 (Brightening Sky)
+    (180, 240, 255), # 10:00 (Clear Blue Sky)
+    (200, 255, 255), # 11:00 (Noon White)
+    (220, 255, 255), # 12:00 (High Noon)
+    (200, 255, 255), # 13:00
+    (180, 240, 255), # 14:00
+    (200, 220, 255), # 15:00
+    (255, 200, 120), # 16:00 (Afternoon Gold)
+    (255, 150, 50),  # 17:00 (Late Sun)
+    (200, 50, 20),   # 18:00 (Sunset Placeholder - Overridden by Sequence)
+    (100, 0, 100),   # 19:00 (Post-Sunset Purple - Brighter than before)
+    (60, 0, 140),    # 20:00 (Deep Twilight)
+    (40, 0, 100),    # 21:00
+    (20, 0, 80),     # 22:00
+    (10, 0, 40),     # 23:00
 ]
 
-# 2. Twilight (Dawn -> Sunrise AND Sunset -> Dusk)
-# dramatic pinks, purples, oranges
-COLORS_TWILIGHT = [
-    (20, 0, 50),    # Pre-dawn purple
-    (100, 20, 50),  # Red horizon
-    (200, 100, 0),  # Orange glow
-    (255, 150, 50), # Golden Hour
+# --- Special Event Sequences ---
+# These play exactly at sunrise/sunset, overriding the hourly list.
+SEQ_SUNRISE = [
+    (10, 0, 60),    # Dark Blue
+    (40, 0, 80),    # Violet
+    (120, 20, 60),  # Deep Pink
+    (255, 80, 20),  # Red-Orange
+    (255, 180, 50), # Gold
+    (255, 220, 150) # Bright Morning
 ]
 
-# 3. Day (Sunrise -> Sunset)
-# Bright whites, Azures, Warm Yellows
-COLORS_DAY = [
-    (255, 200, 100), # Morning warm
-    (255, 255, 220), # Noon bright white
-    (200, 240, 255), # Afternoon blue-white
-    (255, 180, 50),  # Late afternoon gold
+SEQ_SUNSET = [
+    (255, 200, 100), # Late Afternoon
+    (255, 140, 20),  # Golden Hour
+    (200, 50, 10),   # Deep Orange
+    (150, 20, 80),   # Purple/Pink
+    (60, 0, 120),    # Twilight Blue
+    (20, 0, 80)      # Night Fall
 ]
 
 # --- Hardware Init ---
@@ -56,184 +73,159 @@ for pwm in [pwm_r, pwm_g, pwm_b]:
     pwm.freq(1000)
 
 def set_rgb(r, g, b):
-    # Common Anode (Inverted)
+    # Common Anode Inversion
     pwm_r.duty_u16(65535 - (int(r) * 257))
     pwm_g.duty_u16(65535 - (int(g) * 257))
     pwm_b.duty_u16(65535 - (int(b) * 257))
 
-def connect_wifi(ssid, password):
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    if not wlan.isconnected():
-        wlan.connect(ssid, password)
-        # Wait max 10 seconds
-        for _ in range(10):
-            if wlan.isconnected(): return True
-            utime.sleep(1)
-    return wlan.isconnected()
+def interpolate_color(color1, color2, factor):
+    r = color1[0] + (color2[0] - color1[0]) * factor
+    g = color1[1] + (color2[1] - color1[1]) * factor
+    b = color1[2] + (color2[2] - color1[2]) * factor
+    return (r, g, b)
 
-def get_solar_data(lcd):
-    """
-    1. Gets Lat/Lng from IP.
-    2. Gets Solar times from sunrise-sunset.org.
-    """
+def get_color_from_sequence(seq, progress):
+    # Maps 0.0-1.0 to a list of colors
+    idx_float = progress * (len(seq) - 1)
+    idx_int = int(idx_float)
+    factor = idx_float - idx_int
+    if idx_int >= len(seq) - 1: return seq[-1]
+    return interpolate_color(seq[idx_int], seq[idx_int+1], factor)
+
+def get_solar_times(lcd):
+    """Fetches solar data or returns fallback."""
     try:
-        # Step 1: Get Location (IP-based)
-        lcd.clear()
-        lcd.putstr("Locating...")
+        # IP Geolocation
         r = urequests.get("http://ip-api.com/json/")
-        loc_data = r.json()
+        loc = r.json()
         r.close()
-        lat = loc_data['lat']
-        lon = loc_data['lon']
+        lat, lon = loc['lat'], loc['lon']
         
-        # Step 2: Get Sun Data
+        # Solar Data
         lcd.move_to(0, 1)
         lcd.putstr("Fetching Sun...")
         url = f"https://api.sunrise-sunset.org/json?lat={lat}&lng={lon}&formatted=0"
         r = urequests.get(url)
-        sun_data = r.json()['results']
+        data = r.json()['results']
         r.close()
         
-        # Parse ISO8601 strings (2023-01-01T07:23:10+00:00) to simple local hour floats
-        def parse_iso_hour(iso_str):
-            # Extract HH:MM:SS part
-            time_part = iso_str.split('T')[1].split('+')[0]
-            h, m, s = map(int, time_part.split(':'))
-            # Convert to decimal hour (e.g., 7.5 = 7:30)
-            # NOTE: API returns UTC. You might need to adjust for your timezone manually
-            # or rely on the simple shift below.
+        # Parse ISO Time
+        def parse_h(iso):
+            t = iso.split('T')[1].split('+')[0]
+            h, m, s = map(int, t.split(':'))
             return h + (m/60)
 
-        # Apply simple timezone offset (e.g., -5 for EST)
-        # For a robust solution, you'd use a timezone API, but hardcoding offset is easier for Pico.
-        TZ_OFFSET = -4 # ADJUST THIS FOR YOUR LOCATION
+        # ADJUST YOUR TIMEZONE HERE
+        TZ = -4 
         
-        sunrise = (parse_iso_hour(sun_data['sunrise']) + TZ_OFFSET) % 24
-        sunset = (parse_iso_hour(sun_data['sunset']) + TZ_OFFSET) % 24
+        rise = (parse_h(data['sunrise']) + TZ) % 24
+        set_ = (parse_h(data['sunset']) + TZ) % 24
         
-        # Approximate twilight duration (civil start)
-        twilight_am = (parse_iso_hour(sun_data['civil_twilight_begin']) + TZ_OFFSET) % 24
-        twilight_pm = (parse_iso_hour(sun_data['civil_twilight_end']) + TZ_OFFSET) % 24
-        
-        return twilight_am, sunrise, sunset, twilight_pm
+        return rise, set_
+    except:
+        return FALLBACK_SUNRISE, FALLBACK_SUNSET
 
-    except Exception as e:
-        print("API Error:", e)
-        return None
-
-def interpolate_color(color_list, progress):
+def get_virtual_hour(current_h, rise, set_):
     """
-    Returns an (r,g,b) tuple based on progress (0.0 to 1.0) through a list of colors.
+    The Elastic Time Engine.
+    Maps real world time to the 'Ideal Day' (0-23) based on phase.
     """
-    # Ensure progress is 0-1
-    progress = max(0.0, min(1.0, progress))
     
-    # Map progress to an index in the list
-    max_idx = len(color_list) - 1
-    pos = progress * max_idx
-    idx = int(pos)
-    remainder = pos - idx
-    
-    if idx >= max_idx: return color_list[-1]
-    
-    c1 = color_list[idx]
-    c2 = color_list[idx+1]
-    
-    r = c1[0] + (c2[0] - c1[0]) * remainder
-    g = c1[1] + (c2[1] - c1[1]) * remainder
-    b = c1[2] + (c2[2] - c1[2]) * remainder
-    
-    return (int(r), int(g), int(b))
+    # 1. Sunrise Sequence Window
+    # If we are within the transition window of sunrise
+    if abs(current_h - rise) <= (TWILIGHT_DURATION / 2):
+        # Return a special flag or handle logic outside
+        return "SUNRISE"
+        
+    # 2. Sunset Sequence Window
+    if abs(current_h - set_) <= (TWILIGHT_DURATION / 2):
+        return "SUNSET"
+        
+    # 3. Day Phase (Between Rise and Set)
+    if current_h > rise and current_h < set_:
+        # We need to map [Rise -> Set] to [Ideal 6 -> Ideal 18]
+        day_progress = (current_h - rise) / (set_ - rise)
+        # Map 0.0-1.0 to 6.0-18.0
+        return 6.0 + (day_progress * 12.0)
+        
+    # 4. Night Phase
+    else:
+        # We need to map [Set -> Rise] to [Ideal 18 -> Ideal 6] (wrapping 24)
+        
+        # Calculate time since sunset
+        if current_h >= set_:
+            time_passed = current_h - set_
+        else:
+            time_passed = (24 - set_) + current_h
+            
+        night_length = (24 - set_) + rise
+        night_progress = time_passed / night_length
+        
+        # Map 0.0-1.0 to 18.0 - 30.0 (where 30 is 6am next day)
+        virtual = 18.0 + (night_progress * 12.0)
+        return virtual % 24
 
 def run_circadian_loop(lcd, joy_x_pin):
-    # Import main settings for WiFi
-    import clock_app 
+    import clock_app # For WiFi credentials
     
     lcd.clear()
-    lcd.putstr("Syncing Solar...")
+    lcd.putstr("Syncing Solar v2")
     
-    has_net = connect_wifi(clock_app.WIFI_SSID, clock_app.WIFI_PASSWORD)
-    
-    times = None
-    if has_net:
-        times = get_solar_data(lcd)
-    
-    if times:
-        t_dawn, t_sunrise, t_sunset, t_dusk = times
-        lcd.clear()
-        lcd.putstr(f"Day: {int(t_sunrise)}-{int(t_sunset)}")
-        utime.sleep(2)
-    else:
-        # Fallback
-        t_dawn, t_sunrise, t_sunset, t_dusk = (FALLBACK_SUNRISE-1, FALLBACK_SUNRISE, FALLBACK_SUNSET, FALLBACK_SUNSET+1)
-        lcd.clear()
-        lcd.putstr("Using Default")
-        utime.sleep(1)
-
-    # TURN OFF BACKLIGHT (Stealth Mode)
-    lcd.backlight_off()
-    lcd.clear() # Clear text so it's fully dark
-
-    print(f"Solar Schedule: Dawn {t_dawn:.2f}, Rise {t_sunrise:.2f}, Set {t_sunset:.2f}, Dusk {t_dusk:.2f}")
-
-    while True:
-        # 1. Get Current Time (Decimal Hour)
-        now = utime.localtime()
-        current_hour = now[3] + (now[4]/60) + (now[5]/3600)
+    # Connect WiFi
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        wlan.connect(clock_app.WIFI_SSID, clock_app.WIFI_PASSWORD)
+        utime.sleep(5)
         
-        # 2. Determine Phase
-        if current_hour >= t_sunrise and current_hour < t_sunset:
-            # DAY PHASE
-            duration = t_sunset - t_sunrise
-            progress = (current_hour - t_sunrise) / duration
-            rgb = interpolate_color(COLORS_DAY, progress)
+    rise, set_ = get_solar_times(lcd)
+    
+    lcd.clear()
+    lcd.putstr(f"Rise:{rise:.1f} Set:{set_:.1f}")
+    utime.sleep(2)
+    lcd.backlight_off()
+    lcd.clear()
+    
+    while True:
+        # Get Time
+        t = utime.localtime()
+        current_h = t[3] + (t[4]/60) + (t[5]/3600)
+        
+        mode = get_virtual_hour(current_h, rise, set_)
+        
+        rgb = (0,0,0)
+        
+        if mode == "SUNRISE":
+            # Determine progress through sunrise window
+            # Window starts at rise - (duration/2)
+            start_w = rise - (TWILIGHT_DURATION/2)
+            prog = (current_h - start_w) / TWILIGHT_DURATION
+            rgb = get_color_from_sequence(SEQ_SUNRISE, prog)
             
-        elif current_hour >= t_dawn and current_hour < t_sunrise:
-            # MORNING TWILIGHT
-            duration = t_sunrise - t_dawn
-            progress = (current_hour - t_dawn) / duration
-            rgb = interpolate_color(COLORS_TWILIGHT, progress)
-            
-        elif current_hour >= t_sunset and current_hour < t_dusk:
-            # EVENING TWILIGHT
-            # We reverse the twilight array for sunset
-            duration = t_dusk - t_sunset
-            progress = (current_hour - t_sunset) / duration
-            # Invert progress to go from Light -> Dark
-            rgb = interpolate_color(COLORS_TWILIGHT, 1.0 - progress)
+        elif mode == "SUNSET":
+            start_w = set_ - (TWILIGHT_DURATION/2)
+            prog = (current_h - start_w) / TWILIGHT_DURATION
+            rgb = get_color_from_sequence(SEQ_SUNSET, prog)
             
         else:
-            # NIGHT PHASE
-            # Handling the midnight wrap-around is tricky.
-            # We map the 24h clock onto a normalized "Night Axis"
-            if current_hour >= t_dusk:
-                # Pre-midnight
-                night_start = t_dusk
-                night_end = t_dawn + 24
-                curr_adjusted = current_hour
-            else:
-                # Post-midnight
-                night_start = t_dusk - 24
-                night_end = t_dawn
-                curr_adjusted = current_hour
-                
-            duration = night_end - night_start
-            if duration == 0: duration = 1 # Safety
-            progress = (curr_adjusted - night_start) / duration
-            rgb = interpolate_color(COLORS_NIGHT, progress)
-
-        # 3. Set Color
+            # Standard Hourly Interpolation
+            idx = int(mode)
+            next_idx = (idx + 1) % 24
+            factor = mode - idx
+            
+            c1 = HOURLY_COLORS[idx]
+            c2 = HOURLY_COLORS[next_idx]
+            rgb = interpolate_color(c1, c2, factor)
+            
         set_rgb(*rgb)
         
-        # 4. Check Exit / Wake Up
-        if joy_x_pin.read_u16() < JOY_EXIT_THRESHOLD:
+        # Exit Check
+        if joy_x_pin.read_u16() < 20000:
             set_rgb(0,0,0)
-            lcd.backlight_on() # Wake up screen
+            lcd.backlight_on()
             lcd.clear()
             lcd.putstr("Exiting...")
             utime.sleep(1)
             return
-
-        # Update slowly
+            
         utime.sleep(1)
