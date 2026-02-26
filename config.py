@@ -4,8 +4,8 @@
 # This keeps them separate from the main application logic.
 
 # --- WiFi Settings ---
-WIFI_SSID = 'NETGEAR93'
-WIFI_PASSWORD = 'unevenbird552'
+WIFI_SSID = 'SSID'
+WIFI_PASSWORD = 'PASSWORD'
 
 # --- NWS API Settings ---
 # Your contact email for the API User-Agent
